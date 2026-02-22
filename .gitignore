@@ -1,0 +1,56 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*.so
+*.pyd
+
+# Environments
+.venv/
+venv/
+.env
+.env.*
+pip-wheel-metadata/
+
+# Packaging / build
+build/
+dist/
+.eggs/
+*.egg-info/
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.cache/
+coverage/
+htmlcov/
+.coverage
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+.cursor/
+
+# Claude / AI tools
+.claude/
+
+# BMAD
+_bmad/
+_bmad-output/
+
+# Data and artifacts
+data/models/
+data/cache/
+!data/.gitkeep
+!data/raw/.gitkeep
+!data/dataset/.gitkeep
+!data/models/.gitkeep
+*.tsv
+*.bin
+*.pt
+*.model
+*.pkl
+
+# Logs
+logs/
+*.log
