@@ -156,8 +156,11 @@ class PhoneticCorrector:
         self._separator = Separator(phone=" ", word=" _ ", syllable="")
 
         # Pre-build flat list of (station_id, canonical_name, ipa_signature) tuples
+        # Skip interpolated haltes (not real passenger stations)
         self._signatures: List[Tuple[str, str, str]] = []
         for sid, entry in self._index.items():
+            if entry.get("name", "").startswith("Halte-"):
+                continue
             for ipa_key, name_key in [
                 ("ipa_name", "name"),
                 ("ipa_name_norm", "name"),
@@ -171,6 +174,8 @@ class PhoneticCorrector:
         # Build set of known station names and cities (lowercase) for exact-match protection
         self._known_names: Set[str] = set()
         for entry in self._index.values():
+            if entry.get("name", "").startswith("Halte-"):
+                continue
             for key in ("name", "name_norm", "city"):
                 val = entry.get(key, "").strip().lower()
                 if val and len(val) >= 3:
@@ -233,6 +238,38 @@ class PhoneticCorrector:
         if best_sid is not None and best_dist < self._threshold:
             return best_sid, best_name, best_dist
         return None
+
+    def correct_fragment(self, fragment: str) -> CorrectionResult:
+        """Correct a station name fragment extracted by NER.
+
+        Unlike correct(), this always tries the entire fragment first since NER
+        already identified it as a station name.  Falls back to n-gram matching
+        only if the whole-fragment match fails.
+        """
+        cleaned = _PUNCT.sub("", fragment).strip()
+        if not cleaned:
+            return CorrectionResult(original_text=fragment, corrected_text=fragment)
+
+        # Already a known station?
+        if self._is_known_station(cleaned):
+            return CorrectionResult(original_text=fragment, corrected_text=fragment)
+
+        # Try matching the whole fragment as a single candidate
+        candidate_ipa = self._phonemize(cleaned)
+        if candidate_ipa.strip():
+            match = self._find_best_match(candidate_ipa, cleaned)
+            if match:
+                sid, name, dist = match
+                if cleaned.lower() != name.lower():
+                    return CorrectionResult(
+                        original_text=fragment,
+                        corrected_text=name,
+                        corrections=[Correction(fragment, name, sid, dist)],
+                    )
+                return CorrectionResult(original_text=fragment, corrected_text=fragment)
+
+        # Fall back to standard n-gram correction
+        return self.correct(fragment)
 
     def correct(self, text: str) -> CorrectionResult:
         """Correct station names in a transcribed text.

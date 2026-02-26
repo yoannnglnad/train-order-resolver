@@ -39,6 +39,7 @@ class TravelOrder:
     duration_min: Optional[float] = None
     path: Optional[List[str]] = None
     explored_edges: Optional[List[Tuple[str, str]]] = None
+    corrections: Optional[List] = None
 
 
 class TravelResolver:
@@ -52,6 +53,7 @@ class TravelResolver:
         k_neighbors: int = DEFAULT_K_NEIGHBORS,
         cache: Cache | None = None,
         logger=None,
+        phonetic_corrector=None,
     ) -> None:
         # Start HF model loading immediately in background thread
         self.hf_extractor = HFExtractor()
@@ -69,6 +71,7 @@ class TravelResolver:
         )
         self.cache = cache
         self.logger = logger
+        self.phonetic_corrector = phonetic_corrector
         self.aliases = self._build_aliases(self.stations)
         self.alias_best = self._build_alias_best(self.aliases)
         self.id_to_name = {row["station_id"]: row["name"] for row in self.stations.to_dicts()}
@@ -210,6 +213,16 @@ class TravelResolver:
         ]
         return alts if alts else [station_id]
 
+    def _is_specific_station(self, fragment: str | None, station_id: str | None) -> bool:
+        """Return True if the fragment refers to a specific station, not just a city."""
+        if not fragment or not station_id or station_id not in self.graph:
+            return False
+        frag_norm = normalize_name(fragment)
+        city_norm = normalize_name(self.graph.nodes[station_id].get("city", ""))
+        # If the fragment is more specific than just the city name, it's a
+        # specific station choice that should be respected.
+        return frag_norm != city_norm
+
     def _best_station(self, fragment: str) -> Tuple[Optional[str], float]:
         """Find best matching station id for fragment."""
         fragment = fragment.strip()
@@ -339,6 +352,22 @@ class TravelResolver:
             if to_frag is None and s_to:
                 to_frag = s_to
 
+        # Apply phonetic correction only to station fragments (not dates/other text)
+        corrections = []
+        if self.phonetic_corrector:
+            for frag, label in [(from_frag, "from"), (to_frag, "to"), (via_frag, "via")]:
+                if not frag:
+                    continue
+                cr = self.phonetic_corrector.correct_fragment(frag)
+                if cr.corrections:
+                    if label == "from":
+                        from_frag = cr.corrected_text
+                    elif label == "to":
+                        to_frag = cr.corrected_text
+                    else:
+                        via_frag = cr.corrected_text
+                    corrections.extend(cr.corrections)
+
         dep_id, dep_score = self._best_station(from_frag or "")
         arr_id, arr_score = self._best_station(to_frag or "")
         via_id, via_score = (None, 0.0)
@@ -352,7 +381,6 @@ class TravelResolver:
         via_ids: List[str] = [via_id] if via_id else []
 
         departure_ts: Optional[int] = None
-        duration_sec: Optional[int] = None
         total_duration: Optional[int] = None
 
         # If we extracted date spans from HF, try to parse them into a target_ts if none provided
@@ -369,9 +397,17 @@ class TravelResolver:
         best_explored: Optional[List[Tuple[str, str]]] = None
 
         if valid:
-            # Try city alternatives to find the best station pair for the route.
-            dep_alts = self._city_alternatives(dep_id)
-            arr_alts = self._city_alternatives(arr_id)
+            # Use city alternatives only when the user gave a city name, not
+            # a specific station.  E.g. "Lyon" → try all Lyon stations, but
+            # "Lyon Part-Dieu" → use Part-Dieu only.
+            dep_alts = (
+                [dep_id] if self._is_specific_station(from_frag, dep_id)
+                else self._city_alternatives(dep_id)
+            )
+            arr_alts = (
+                [arr_id] if self._is_specific_station(to_frag, arr_id)
+                else self._city_alternatives(arr_id)
+            )
 
             best_route = None  # (dep_id, arr_id, departure_ts, total_duration, path)
 
@@ -395,12 +431,13 @@ class TravelResolver:
                             path, explored = compute_route_with_exploration(
                                 self.graph, d, a,
                             )
-                            weight = sum(
+                            weight_min = sum(
                                 self.graph[path[i]][path[i + 1]].get("weight", 1)
                                 for i in range(len(path) - 1)
                             )
-                            if best_route is None or weight < best_route[3]:
-                                best_route = (d, a, None, weight, path)
+                            dur = weight_min * 60  # minutes → seconds
+                            if best_route is None or dur < best_route[3]:
+                                best_route = (d, a, None, dur, path)
                                 best_explored = explored
                     except ValueError:
                         continue
@@ -408,7 +445,7 @@ class TravelResolver:
             if best_route is not None:
                 dep_id, arr_id = best_route[0], best_route[1]
                 departure_ts = best_route[2]
-                total_duration = best_route[3] if target_ts is not None else None
+                total_duration = best_route[3]  # always seconds
                 best_path = best_route[4]
             else:
                 valid = False
@@ -420,8 +457,8 @@ class TravelResolver:
             decision = {"depart_id": dep_id, "arrivee_id": arr_id, "via_ids": via_ids}
             if departure_ts is not None:
                 decision["departure_ts"] = departure_ts
-                mins = (total_duration if total_duration is not None else duration_sec) / 60 if (total_duration or duration_sec) else None
-                decision["duration_min"] = mins
+            if total_duration:
+                decision["duration_min"] = total_duration / 60
             log_decision(self.logger, sentence_id=sentence_id, decision=decision, score=overall_score, latency_ms=0.0)
 
         return TravelOrder(
@@ -432,9 +469,10 @@ class TravelResolver:
             is_valid=valid,
             score=overall_score,
             departure_ts=departure_ts if valid else None,
-            duration_min=((total_duration if total_duration is not None else duration_sec) / 60) if valid and (total_duration or duration_sec) else None,
-            path=best_path if valid else None,
+            duration_min=(total_duration / 60) if valid and total_duration else None,
+            path=[s for s in best_path if not self.id_to_name.get(s, "").startswith("Halte-")] if valid and best_path else None,
             explored_edges=best_explored if valid else None,
+            corrections=corrections or None,
         )
 
 

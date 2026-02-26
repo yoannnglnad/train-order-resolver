@@ -1,5 +1,92 @@
 # Changelog
 
+## [2026-02-26] Correction phonétique ciblée, filtrage des haltes, durée
+
+### 21. Inversion du flow : NER avant correction phonétique
+
+La correction phonétique s'appliquait sur le texte brut complet **avant**
+l'extraction d'entités, ce qui provoquait des faux positifs sur les expressions
+non-station (ex : "le 28 février" → "Le Chambon-Feugerolles"). Le flow est
+désormais inversé : CamemBERT NER extrait d'abord les entités (DEPART, ARRIVEE,
+VIA, DATE), puis la correction phonétique ne s'applique qu'aux fragments de type
+station.
+
+- `TravelResolver` accepte un `phonetic_corrector` optionnel
+- Les corrections sont retournées dans `TravelOrder.corrections`
+- `main.py` et `api/server.py` passent le corrector au resolver au lieu de
+  corriger le texte entier en amont
+- Suppression du champ `corrected_text` de la réponse API
+
+### 22. `correct_fragment()` : correction phonétique par fragment entier
+
+La méthode `correct()` décompose le texte en n-grams (1-4 mots) et filtre ceux
+ayant > 50% de stopwords. Pour les noms de gares multi-mots avec articles
+(ex : "Fleurieu sur la Brille", 50% stopwords), le n-gram complet était
+éliminé et les mots corrigés individuellement ("Fleurieu" → "Fleurance",
+"Brille" → "Brion").
+
+Nouvelle méthode `correct_fragment()` sur `PhoneticCorrector` : comme le NER a
+déjà identifié le fragment comme un nom de gare, on essaie d'abord de matcher
+le fragment entier comme un seul candidat phonétique. Fallback sur `correct()`
+uniquement si le match global échoue.
+
+- "Fleurieu sur la Brille" → **Fleurieux-sur-l'Arbresle** (dist 0.220)
+- "Lyon, Carpardieu" → **Lyon-Part-Dieu** (dist 0.231)
+
+### 23. Filtrage des haltes interpolées
+
+Les 830 haltes interpolées (`passengers='I'`, nommées "Halte-XXXXX")
+apparaissaient dans les gares intermédiaires de l'itinéraire. Elles restent
+dans le graphe pour le routage (24% des edges du schedule les traversent) mais
+sont désormais filtrées de :
+
+- `TravelOrder.path` (dans `resolve_order()`)
+- La réponse API (`/api/resolve-audio`)
+- L'index phonétique (`phonetic_db.py`)
+- Les signatures du correcteur (`phonetic_corrector.py`)
+
+### 24. Respect du choix de gare spécifique
+
+`_city_alternatives()` élargissait systématiquement à toutes les gares d'une
+ville, même quand l'utilisateur avait nommé une gare précise. Résultat :
+"Lyon Part-Dieu" était remplacé par Lyon-Gorge-de-Loup (route plus courte
+depuis L'Arbresle).
+
+Nouvelle méthode `_is_specific_station()` : compare le fragment NER normalisé
+avec le nom de ville. Si le fragment contient plus que le nom de ville
+(ex : "lyon part dieu" ≠ "lyon"), les alternatives ne sont pas utilisées et le
+routage respecte le choix de l'utilisateur.
+
+### 25. Affichage de la durée du trajet
+
+En mode sans date (`target_ts=None`), `duration_min` était toujours `null`
+car la somme des poids du graphe (en minutes) n'était pas convertie en durée.
+Correction : le poids est converti en secondes pour être cohérent avec le mode
+time-dependent, et `duration_min` est toujours renseigné quand un chemin
+existe.
+
+Le frontend formate en heures+minutes quand ≥ 60 min (ex : "5h30" au lieu de
+"330 min").
+
+### Frontend
+
+- Suppression du doublon de la carte "Corrections phonétiques"
+- Affichage des corrections individuelles par entité (original barré → vert +
+  distance IPA)
+
+### Fichiers modifiés
+
+| Fichier | Changements |
+|---------|-------------|
+| `src/nlp/inference.py` | `phonetic_corrector`, `corrections`, `_is_specific_station`, filtrage haltes du path, fix duration |
+| `src/stt/phonetic_corrector.py` | `correct_fragment()`, exclusion haltes des signatures |
+| `src/stt/phonetic_db.py` | Exclusion haltes de l'index |
+| `api/server.py` | Correction par fragment, filtrage haltes, duration |
+| `main.py` | Passage du corrector au resolver |
+| `web/app/page.tsx` | Corrections UI, format durée, suppression doublon |
+
+---
+
 ## [2026-02-17] Évaluation pipeline vs API SNCF — 100% résolution gares
 
 ### 16. Script d'évaluation systématique vs API SNCF (Navitia)

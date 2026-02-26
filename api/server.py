@@ -40,7 +40,7 @@ _corrector = None
 def _get_resolver() -> TravelResolver:
     global _resolver
     if _resolver is None:
-        _resolver = TravelResolver()
+        _resolver = TravelResolver(phonetic_corrector=_get_corrector())
     return _resolver
 
 
@@ -133,34 +133,28 @@ async def resolve_audio(file: UploadFile = File(...)):
         log.info("Transcription: %r (duration=%.1fs, segments=%d)",
                  raw_text, transcription.duration_sec, len(transcription.segments))
 
-        # 2. Phonetic correction
-        corrected_text = raw_text
+        # 2. Resolve itinerary (phonetic correction is applied inside the
+        #    resolver to station entities only, not the full text).
+        resolver = _get_resolver()
+        target_ts = _parse_datetime_from_text(raw_text)
+        order = resolver.resolve_order("audio_web", raw_text, target_ts=target_ts)
+        log.info("Resolve: valid=%s, dep=%s, arr=%s",
+                 order.is_valid, order.departure_id, order.arrival_id)
+
         corrections: list[dict] = []
-        if raw_text.strip():
-            corrector = _get_corrector()
-            correction = corrector.correct(raw_text)
-            corrected_text = correction.corrected_text
+        if order.corrections:
             corrections = [
                 {
                     "original": c.original,
                     "corrected": c.corrected,
                     "distance": round(c.ipa_distance, 3),
                 }
-                for c in correction.corrections
+                for c in order.corrections
             ]
-            if corrections:
-                log.info("Corrections: %s", corrections)
-
-        # 3. Resolve itinerary
-        resolver = _get_resolver()
-        target_ts = _parse_datetime_from_text(corrected_text)
-        order = resolver.resolve_order("audio_web", corrected_text, target_ts=target_ts)
-        log.info("Resolve: valid=%s, dep=%s, arr=%s",
-                 order.is_valid, order.departure_id, order.arrival_id)
+            log.info("Corrections: %s", corrections)
 
         result = {
             "transcription": raw_text,
-            "corrected_text": corrected_text,
             "corrections": corrections,
             "is_valid": order.is_valid,
             "departure": None,
@@ -176,15 +170,16 @@ async def resolve_audio(file: UploadFile = File(...)):
             graph = resolver.graph
             result["departure"] = resolver.id_to_name[order.departure_id]
             result["arrival"] = resolver.id_to_name[order.arrival_id]
+            if order.duration_min is not None:
+                result["duration_min"] = round(order.duration_min)
             if order.departure_ts is not None:
                 dep_dt = datetime.fromtimestamp(order.departure_ts, tz=timezone.utc)
                 result["departure_time"] = dep_dt.strftime("%Y-%m-%d %H:%M")
                 if order.duration_min is not None:
                     arr_dt = dep_dt + timedelta(minutes=order.duration_min)
                     result["arrival_time"] = arr_dt.strftime("%Y-%m-%d %H:%M")
-                    result["duration_min"] = round(order.duration_min)
 
-            # Full path with coordinates
+            # Full path with coordinates (filter out interpolated haltes)
             if order.path:
                 result["path"] = [
                     {
@@ -194,6 +189,7 @@ async def resolve_audio(file: UploadFile = File(...)):
                         "lon": graph.nodes[sid].get("lon"),
                     }
                     for sid in order.path
+                    if not graph.nodes[sid].get("name", "").startswith("Halte-")
                 ]
 
             # Explored edges for Leaflet visualization (cap at 10k)

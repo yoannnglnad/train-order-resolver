@@ -34,7 +34,6 @@ interface ExploredEdge {
 
 interface ResolveResult {
   transcription: string;
-  corrected_text: string;
   corrections: Correction[];
   is_valid: boolean;
   departure: string | null;
@@ -203,7 +202,7 @@ export default function Home() {
             )}
           </Card>
 
-          {/* Corrections */}
+          {/* Phonetic corrections */}
           {result.corrections.length > 0 && (
             <Card title="Corrections phonetiques">
               <div className="space-y-2">
@@ -217,20 +216,11 @@ export default function Home() {
                       {c.corrected}
                     </span>
                     <span className="text-slate-600 text-xs ml-auto">
-                      dist: {c.distance}
+                      {c.distance.toFixed(3)}
                     </span>
                   </div>
                 ))}
               </div>
-            </Card>
-          )}
-
-          {/* Corrected text */}
-          {result.corrections.length > 0 && (
-            <Card title="Texte corrige">
-              <p className="text-slate-300 font-mono text-sm">
-                {result.corrected_text}
-              </p>
             </Card>
           )}
 
@@ -244,9 +234,11 @@ export default function Home() {
                 <div className="flex items-center gap-4">
                   <StationBadge label="Depart" name={result.departure!} />
                   <div className="flex-1 border-t border-dashed border-slate-600 relative">
-                    {result.duration_min && (
-                      <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-slate-800 px-2 text-xs text-slate-400">
-                        {result.duration_min} min
+                    {result.duration_min != null && (
+                      <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-slate-800 px-2 text-xs text-slate-400 whitespace-nowrap">
+                        {result.duration_min >= 60
+                          ? `${Math.floor(result.duration_min / 60)}h${String(result.duration_min % 60).padStart(2, "0")}`
+                          : `${result.duration_min} min`}
                       </span>
                     )}
                   </div>

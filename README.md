@@ -59,8 +59,8 @@ cd web && npm install && cd ..
 # 1. Generer le dataset NLP synthetique
 python scripts/prepare_dataset.py
 
-# 2. Construire l'index phonetique
-python scripts/build_phonetic_db.py
+# 2. Construire l'index phonetique (macOS)
+PHONEMIZER_ESPEAK_LIBRARY=/opt/homebrew/lib/libespeak-ng.dylib python scripts/build_phonetic_db.py
 ```
 
 ### Utilisation
@@ -81,12 +81,16 @@ echo "1,Je voudrais aller de Paris a Lyon demain a 8h30" | python main.py
 #### Mode Web (vocal)
 
 ```bash
-# Terminal 1 : API
-python api/server.py
+# Terminal 1 : API (macOS — eSpeak-NG doit etre localise)
+PHONEMIZER_ESPEAK_LIBRARY=/opt/homebrew/lib/libespeak-ng.dylib python api/server.py
 
 # Terminal 2 : Frontend
 cd web && npm run dev
 ```
+
+> **Note macOS (Homebrew)** : la variable `PHONEMIZER_ESPEAK_LIBRARY` est
+> necessaire car `phonemizer` ne trouve pas automatiquement la lib eSpeak-NG
+> installee via Homebrew. Sur Linux elle n'est generalement pas requise.
 
 Ouvrir `http://localhost:3000`, cliquer sur le bouton d'enregistrement et dicter un itineraire.
 
@@ -139,10 +143,10 @@ travel-order-resolver/
 Audio (.webm) ──► Whisper ──► Texte brut
                                   │
                                   ▼
-                          Correction phonetique IPA
-                                  │
-                                  ▼
                           CamemBERT NER ──► Entites (depart, arrivee, horaire)
+                                                    │
+                                                    ▼
+                                    Correction phonetique IPA (gares uniquement)
                                                     │
                                                     ▼
                                             Dijkstra sur graphe SNCF

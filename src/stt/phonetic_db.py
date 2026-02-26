@@ -45,6 +45,8 @@ def build_phonetic_index(
       - ipa_city: IPA transcription of city
     """
     df = pl.read_parquet(stations_path)
+    # Exclude interpolated haltes (not real passenger stations)
+    df = df.filter(pl.col("passengers") != "I")
     backend = _get_backend()
 
     station_ids = df["station_id"].to_list()

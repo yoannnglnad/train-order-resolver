@@ -190,25 +190,20 @@ def main() -> int:
         logger=logger,
     )
 
-    # --- Audio mode: transcribe, correct, resolve ---
+    # --- Audio mode: transcribe, extract entities, then correct station names ---
     if args.audio:
         from src.stt.transcriber import Transcriber
         from src.stt.phonetic_corrector import PhoneticCorrector
 
         transcriber = Transcriber()
         result = transcriber.transcribe(args.audio)
-        sys.stderr.write(f"[STT] Transcription: {result.text}\n")
-
         phrase = result.text
+        sys.stderr.write(f"[STT] Transcription: {phrase}\n")
+
+        # Pass corrector to resolver: phonetic correction is applied only
+        # to extracted station entities, not the full text.
         if not args.no_phonetic_correction:
-            corrector = PhoneticCorrector()
-            correction = corrector.correct(phrase)
-            phrase = correction.corrected_text
-            for c in correction.corrections:
-                sys.stderr.write(
-                    f'[STT] Correction: "{c.original}" -> "{c.corrected}" '
-                    f"(distance={c.ipa_distance:.3f})\n"
-                )
+            resolver.phonetic_corrector = PhoneticCorrector()
 
         with _open_output(args.output) as outfile:
             writer = csv.writer(outfile)
@@ -217,6 +212,12 @@ def main() -> int:
             )
             target_ts = parse_datetime_from_text(phrase)
             order = resolver.resolve_order("audio_1", phrase, target_ts=target_ts)
+            if order.corrections:
+                for c in order.corrections:
+                    sys.stderr.write(
+                        f'[STT] Correction: "{c.original}" -> "{c.corrected}" '
+                        f"(distance={c.ipa_distance:.3f})\n"
+                    )
             if not order.is_valid:
                 writer.writerow(["audio_1", "INVALID", "", "", "", ""])
             else:
